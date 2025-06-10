@@ -1,107 +1,159 @@
-# Program ini mengimplementasikan Decision Tree untuk klasifikasi kualitas wine
+# =============================================================
+# Wine Quality Classification with Manual K‑Nearest Neighbor
+# =============================================================
+
 import csv
 import math
-from collections import Counter
+import random
 
-# Fungsi untuk memuat dataset dari file CSV
-def load_dataset(filename):
-    with open(filename, 'r') as file:
-        reader = csv.reader(file)
-        header = next(reader)
-        data = []
+# 1. Label Handling
+def relabel(label: str) -> str:
+    """Membersihkan dan menstandarkan label kualitas.
+
+    Dataset sudah pakai kata *low / medium / high*. Kita hanya memastikan
+    hasil akhir huruf kecil tanpa spasi ekstra sehingga konsisten di model.
+    """
+    return label.strip().lower()
+
+# 2. Data Loading
+def load_data(filename: str):
+    """Membaca CSV → list of dict + konversi tipe data.
+
+    Kolom numerik di‑cast ke *float* agar bisa diolah matematis.
+    Label dikirim ke `relabel()` untuk distandarkan.
+    """
+    data = []
+    with open(filename, newline="") as f:
+        reader = csv.DictReader(f)
         for row in reader:
-            features = list(map(float, row[:-1]))  # Ambil 4 fitur numerik
-            label = row[-1].strip().lower()        # Label: low/medium/high
-            data.append(features + [label])
-    return header, data
+            data.append({
+                "fixed_acidity":  float(row["fixed_acidity"]),
+                "residual_sugar": float(row["residual_sugar"]),
+                "alcohol":       float(row["alcohol"]),
+                "density":       float(row["density"]),
+                "label":         relabel(row["quality_label"]),
+            })
+    return data
 
-# Fungsi untuk menghitung entropy dari dataset
-def entropy(data):
-    labels = [row[-1] for row in data]
-    total = len(labels)
-    counts = Counter(labels)
-    return -sum((c / total) * math.log2(c / total) for c in counts.values())
+# 3. Normalization (min‑max)
+def normalize(data):
+    """Skalakan ke rentang 0‑1 per fitur + simpan rentang awal.
 
-# Fungsi untuk membagi data berdasarkan fitur dan threshold
-def split_data(data, feature_index, threshold):
-    left = [row for row in data if row[feature_index] <= threshold]
-    right = [row for row in data if row[feature_index] > threshold]
-    return left, right
+    KNN sensitif terhadap skala: fitur besar bisa mendominasi jarak.
+    """
+    ranges = {}
+    keys = ["fixed_acidity", "residual_sugar", "alcohol", "density"]
+    for k in keys:
+        vals = [row[k] for row in data]
+        lo, hi = min(vals), max(vals)
+        ranges[k] = (lo, hi)
+        for row in data:
+            row[k] = (row[k] - lo) / (hi - lo) if hi != lo else 0.0
+    return data, ranges  # data sudah terskala + rentang asli
 
-# Fungsi untuk mencari split terbaik berdasarkan gain informasi
-def best_split(data):
-    best_gain = 0
-    best_feature = None
-    best_threshold = None
-    base_entropy = entropy(data)
-    n_features = len(data[0]) - 1
+# 4. Train‑Test Split (70‑30)
+def split_data(data, ratio: float = 0.7):
+    """Mengacak lalu membagi data → (train, test)."""
+    random.seed(42)      # reproducible
+    random.shuffle(data) # in‑place shuffle
+    cut = int(len(data) * ratio)
+    return data[:cut], data[cut:]
 
-    for i in range(n_features):
-        unique_vals = sorted(set(row[i] for row in data))
-        if len(unique_vals) < 2:
-            continue
-        thresholds = [(unique_vals[j] + unique_vals[j + 1]) / 2 for j in range(len(unique_vals) - 1)]
-        for val in thresholds:
-            left, right = split_data(data, i, val)
-            if not left or not right:
-                continue
-            p = len(left) / len(data)
-            gain = base_entropy - (p * entropy(left) + (1 - p) * entropy(right))
-            if gain > best_gain:
-                best_gain = gain
-                best_feature = i
-                best_threshold = val
-    return best_feature, best_threshold
+# 5. K‑Nearest Neighbor Primitives
+def euclidean(a, b):
+    """Jarak Euclidean antar dua sampel (4 dimensi)."""
+    return math.sqrt(
+        (a["fixed_acidity"]  - b["fixed_acidity"])  ** 2 +
+        (a["residual_sugar"] - b["residual_sugar"]) ** 2 +
+        (a["alcohol"]        - b["alcohol"])        ** 2 +
+        (a["density"]        - b["density"])        ** 2
+    )
 
-# Kelas Node untuk merepresentasikan setiap node dalam pohon decision tree
-class Node:
-    def __init__(self, feature=None, threshold=None, left=None, right=None, *, label=None):
-        self.feature = feature
-        self.threshold = threshold
-        self.left = left
-        self.right = right
-        self.label = label
+def majority_vote(labels):
+    """Mengembalikan label terbanyak di *labels* (tanpa Counter)."""
+    counts = {}
+    for lbl in labels:
+        counts[lbl] = counts.get(lbl, 0) + 1
+    return max(counts, key=counts.get)
 
-# Fungsi rekursif untuk membangun pohon decision tree
-def build_tree(data, depth=0, max_depth=5):
-    labels = [row[-1] for row in data]
-    if labels.count(labels[0]) == len(labels) or depth == max_depth:
-        majority_label = Counter(labels).most_common(1)[0][0]
-        return Node(label=majority_label)
+def predict_knn(train, sample, k: int = 3):
+    """Prediksi satu *sample* menggunakan KNN dengan k=3 (default)."""
+    # 1) Hitung jarak ke setiap data training
+    distances = [(euclidean(sample, row), row["label"]) for row in train]
+    # 2) Urutkan dari jarak terkecil
+    distances.sort(key=lambda tup: tup[0])
+    # 3) Ambil k label terdekat
+    top_k_labels = [lbl for _, lbl in distances[:k]]
+    return majority_vote(top_k_labels)
 
-    feature, threshold = best_split(data)
-    if feature is None:
-        majority_label = Counter(labels).most_common(1)[0][0]
-        return Node(label=majority_label)
+# 6. Evaluation Metrics (macro‑averaged)
+def evaluate(y_true, y_pred):
+    """Hitung akurasi, presisi, recall, F1 (macro)."""
+    labels = set(y_true)
+    # ---- Accuracy ----
+    accuracy = sum(t == p for t, p in zip(y_true, y_pred)) / len(y_true)
 
-    left_data, right_data = split_data(data, feature, threshold)
-    left_branch = build_tree(left_data, depth + 1, max_depth)
-    right_branch = build_tree(right_data, depth + 1, max_depth)
-    return Node(feature, threshold, left_branch, right_branch)
+    precision_sum = recall_sum = f1_sum = 0
+    for lbl in labels:
+        tp = fp = fn = 0
+        for t, p in zip(y_true, y_pred):
+            if t == lbl and p == lbl:
+                tp += 1
+            elif t != lbl and p == lbl:
+                fp += 1
+            elif t == lbl and p != lbl:
+                fn += 1
+        prec_lbl = tp / (tp + fp) if (tp + fp) else 0
+        recall_lbl = tp / (tp + fn) if (tp + fn) else 0
+        f1_lbl = 2 * prec_lbl * recall_lbl / (prec_lbl + recall_lbl) if (prec_lbl + recall_lbl) else 0
+        precision_sum += prec_lbl
+        recall_sum += recall_lbl
+        f1_sum += f1_lbl
 
-# Fungsi untuk melakukan prediksi menggunakan pohon decision tree
-def predict(tree, row):
-    if tree.label is not None:
-        return tree.label
-    branch = tree.left if row[tree.feature] <= tree.threshold else tree.right
-    return predict(branch, row)
+    n = len(labels)
+    return {
+        "accuracy":  accuracy,
+        "precision": precision_sum / n,
+        "recall":    recall_sum / n,
+        "f1_score":  f1_sum / n,
+    }
 
-# MAIN PROGRAM
+# 7. Main Program
+def main():
+    data = load_data("wine_quality_classification.csv")
+    data, ranges = normalize(data)
+    train, test = split_data(data, 0.7)
+    k = 3  
+
+    y_true_train = [row["label"] for row in train]
+    y_pred_train = [predict_knn(train, row, k) for row in train]
+
+    y_true_test = [row["label"] for row in test]
+    y_pred_test = [predict_knn(train, row, k) for row in test]
+
+    print("Evaluasi Training:")
+    for metric, val in evaluate(y_true_train, y_pred_train).items():
+        print(f"{metric.capitalize():10}: {val:.4f}")
+
+    print("\nEvaluasi Testing:")
+    for metric, val in evaluate(y_true_test, y_pred_test).items():
+        print(f"{metric.capitalize():10}: {val:.4f}")
+
+    print("\n===== DEMO =====")
+    user = {
+        "fixed_acidity":  float(input("Fixed acidity: ")),  # g/L
+        "residual_sugar": float(input("Residual sugar: ")), # g/L
+        "alcohol":       float(input("Alcohol (%): ")),     # % vol.
+        "density":       float(input("Density: ")),         # g/cm³
+    }
+
+    for feat in user:
+        lo, hi = ranges[feat]
+        user[feat] = (user[feat] - lo) / (hi - lo) if hi != lo else 0.0
+
+    prediction = predict_knn(train, user, k)
+    print("\nPrediksi kualitas wine:", prediction.upper())
+
+
 if __name__ == "__main__":
-    # Load dataset dan bangun pohon
-    header, data = load_dataset("wine_quality_classification.csv")
-    tree = build_tree(data, max_depth=5)
-
-    # Terima input manual dari user
-    print("Masukkan nilai fitur wine:")
-    fixed_acidity = float(input("Fixed Acidity (4-16): "))
-    residual_sugar = float(input("Residual Sugar (0.5-15): "))
-    alcohol = float(input("Alcohol (%) (8-14): "))
-    density = float(input("Density (0.9900-1.1): "))
-
-    # Prediksi kualitas wine berdasarkan input user
-    user_input = [fixed_acidity, residual_sugar, alcohol, density]
-    result = predict(tree, user_input)
-
-    # Tampilkan hasil prediksi
-    print(f"\nPrediksi kualitas wine: {result.upper()}")
+    main()

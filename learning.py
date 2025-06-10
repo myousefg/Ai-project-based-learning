@@ -60,22 +60,15 @@ def majority_vote(labels):
     return max(counts, key=counts.get)
 
 def predict_knn(train, sample, k: int = 3):
-    """Prediksi satu *sample* menggunakan KNN dengan k=3 (default)."""
-    # 1) Hitung jarak ke setiap data training
     distances = [(euclidean(sample, row), row["label"]) for row in train]
-    # 2) Urutkan dari jarak terkecil
     distances.sort(key=lambda tup: tup[0])
-    # 3) Ambil k label terdekat
     top_k_labels = [lbl for _, lbl in distances[:k]]
     return majority_vote(top_k_labels)
 
 # 6. Evaluation Metrics (macro‑averaged)
 def evaluate(y_true, y_pred):
-    """Hitung akurasi, presisi, recall, F1 (macro)."""
     labels = set(y_true)
-    # ---- Accuracy ----
     accuracy = sum(t == p for t, p in zip(y_true, y_pred)) / len(y_true)
-
     precision_sum = recall_sum = f1_sum = 0
     for lbl in labels:
         tp = fp = fn = 0
@@ -122,21 +115,19 @@ def main():
     for metric, val in evaluate(y_true_test, y_pred_test).items():
         print(f"{metric.capitalize():10}: {val:.4f}")
 
-    print("\n===== DEMO =====")
+    print("\n===== Inputkan Spesifikasi Wine =====")
     user = {
-        "fixed_acidity":  float(input("Fixed acidity: ")),  # g/L
-        "residual_sugar": float(input("Residual sugar: ")), # g/L
-        "alcohol":       float(input("Alcohol (%): ")),     # % vol.
-        "density":       float(input("Density: ")),         # g/cm³
+        "fixed_acidity":  float(input("Fixed Acidity (4-16): ")),       # g/L
+        "residual_sugar": float(input("Residual Sugar (0.5-15): ")),    # g/L
+        "alcohol":       float(input("Alcohol (%) (8-14): ")),          # % vol.
+        "density":       float(input("Density (0.9900-1.1): ")),        # g/cm³
     }
 
     for feat in user:
         lo, hi = ranges[feat]
         user[feat] = (user[feat] - lo) / (hi - lo) if hi != lo else 0.0
-
     prediction = predict_knn(train, user, k)
     print("\nPrediksi kualitas wine:", prediction.upper())
-
 
 if __name__ == "__main__":
     main()

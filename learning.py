@@ -8,20 +8,10 @@ import random
 
 # 1. Label Handling
 def relabel(label: str) -> str:
-    """Membersihkan dan menstandarkan label kualitas.
-
-    Dataset sudah pakai kata *low / medium / high*. Kita hanya memastikan
-    hasil akhir huruf kecil tanpa spasi ekstra sehingga konsisten di model.
-    """
     return label.strip().lower()
 
 # 2. Data Loading
 def load_data(filename: str):
-    """Membaca CSV → list of dict + konversi tipe data.
-
-    Kolom numerik di‑cast ke *float* agar bisa diolah matematis.
-    Label dikirim ke `relabel()` untuk distandarkan.
-    """
     data = []
     with open(filename, newline="") as f:
         reader = csv.DictReader(f)
@@ -37,10 +27,6 @@ def load_data(filename: str):
 
 # 3. Normalization (min‑max)
 def normalize(data):
-    """Skalakan ke rentang 0‑1 per fitur + simpan rentang awal.
-
-    KNN sensitif terhadap skala: fitur besar bisa mendominasi jarak.
-    """
     ranges = {}
     keys = ["fixed_acidity", "residual_sugar", "alcohol", "density"]
     for k in keys:
@@ -49,19 +35,17 @@ def normalize(data):
         ranges[k] = (lo, hi)
         for row in data:
             row[k] = (row[k] - lo) / (hi - lo) if hi != lo else 0.0
-    return data, ranges  # data sudah terskala + rentang asli
+    return data, ranges
 
 # 4. Train‑Test Split (70‑30)
 def split_data(data, ratio: float = 0.7):
-    """Mengacak lalu membagi data → (train, test)."""
-    random.seed(42)      # reproducible
-    random.shuffle(data) # in‑place shuffle
+    random.seed(42)
+    random.shuffle(data)
     cut = int(len(data) * ratio)
     return data[:cut], data[cut:]
 
 # 5. K‑Nearest Neighbor Primitives
 def euclidean(a, b):
-    """Jarak Euclidean antar dua sampel (4 dimensi)."""
     return math.sqrt(
         (a["fixed_acidity"]  - b["fixed_acidity"])  ** 2 +
         (a["residual_sugar"] - b["residual_sugar"]) ** 2 +
@@ -70,7 +54,6 @@ def euclidean(a, b):
     )
 
 def majority_vote(labels):
-    """Mengembalikan label terbanyak di *labels* (tanpa Counter)."""
     counts = {}
     for lbl in labels:
         counts[lbl] = counts.get(lbl, 0) + 1
